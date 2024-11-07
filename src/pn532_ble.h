@@ -78,7 +78,6 @@ public:
     bool connectToDevice();
     void writeData(const std::vector<uint8_t> &data);
     void setDevice(NimBLEAdvertisedDevice device);
-    // static uint8_t *notifyCallback(NimBLERemoteCharacteristic *pChr, uint8_t *data, size_t len, bool isNotify);
     bool isConnected();
     NimBLEAdvertisedDevice _device;
     std::string getName() { return _device.getName(); }
@@ -86,6 +85,11 @@ public:
     bool setNormalMode();
     bool getVersion();
     bool hf14aScan();
+    std::vector<uint8_t> sendData(std::vector<uint8_t> data, bool append_crc);
+    std::vector<uint8_t> send7bit(std::vector<uint8_t> data);
+    bool isGen1A();
+    bool isGen3();
+    bool isGen4();
 
     typedef struct {
         byte size;
@@ -120,10 +124,14 @@ private:
     NimBLERemoteCharacteristic *chrNotify = nullptr;
 
     bool _debug = false;
-
+    
     bool writeCommand(Command cmd, uint8_t *data = nullptr, size_t length = 0);
+    bool writeCommand(Command cmd, const std::vector<uint8_t>& data);
     bool checkResponse(uint8_t cmd);
     bool isCompleteFrame();
+
+    bool resetRegister();
+    bool halt();
 };
 
 #endif // PN532_BLE_H

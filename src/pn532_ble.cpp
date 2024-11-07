@@ -18,6 +18,22 @@ uint8_t dcs(uint8_t *data, size_t length)
     return (0x00 - checksum) & 0xFF;
 }
 
+void appendCrcA(uint8_t *data, size_t length)
+{
+    uint16_t crc = 0x6363; // Initial value for CRC-A
+
+    for (size_t i = 0; i < length; i++)
+    {
+        uint8_t ch = data[i] ^ (crc & 0xFF);
+        ch = (ch ^ (ch << 4)) & 0xFF;
+        crc = (crc >> 8) ^ (ch << 8) ^ (ch << 3) ^ (ch >> 4);
+    }
+
+    crc &= 0xFFFF;
+    data[length] = crc & 0xFF;
+    data[length + 1] = crc >> 8;
+}
+
 PN532_BLE::PN532_BLE(bool debug) { _debug = debug; }
 
 PN532_BLE::~PN532_BLE()
@@ -72,7 +88,7 @@ bool isCompleteFrame(uint8_t *pData, size_t length)
 }
 
 void pn532NotifyCallBack(NimBLERemoteCharacteristic *pRemoteCharacteristic, uint8_t *pData, size_t length, bool isNotify)
-{ 
+{
     Serial.print("pn532NotifyCallBack: ");
     Serial.println(length);
     Serial.println();
@@ -96,8 +112,8 @@ void pn532NotifyCallBack(NimBLERemoteCharacteristic *pRemoteCharacteristic, uint
         return;
     }
 
-    Serial.print("RSP length: ");
-    Serial.println(rsp.length);
+    // Serial.print("RSP length: ");
+    // Serial.println(rsp.length);
     uint8_t dataSize = rsp.raw[9];
     rsp.dataSize = dataSize - 2;
     rsp.command = rsp.raw[12] - 1;
@@ -107,13 +123,13 @@ void pn532NotifyCallBack(NimBLERemoteCharacteristic *pRemoteCharacteristic, uint
         memcpy(rsp.data, rsp.raw + 13, rsp.raw[9] - 2);
     }
 
-    Serial.println("Response Cmd: ");
-    Serial.println(rsp.command, HEX);
-    Serial.println();
-    Serial.println("Response data size: ");
-    Serial.println(rsp.dataSize);
-    Serial.println();
-    Serial.println("RSP Data: ");
+    // Serial.println("Response Cmd: ");
+    // Serial.println(rsp.command, HEX);
+    // Serial.println();
+    // Serial.println("Response data size: ");
+    // Serial.println(rsp.dataSize);
+    // Serial.println();
+    // Serial.println("RSP Data: ");
     for (int i = 0; i < rsp.dataSize; i++)
     {
         Serial.print(rsp.data[i] < 0x10 ? " 0" : " ");
@@ -198,7 +214,7 @@ bool PN532_BLE::connectToDevice()
 
 bool PN532_BLE::writeCommand(Command cmd, uint8_t *data, size_t length)
 {
-    //reset rsp length for new task
+    // reset rsp length for new task
     rsp.length = 0;
 
     if (data == nullptr)
@@ -240,6 +256,10 @@ bool PN532_BLE::writeCommand(Command cmd, uint8_t *data, size_t length)
 
     bool res = checkResponse(uint8_t(cmd));
     return writeRes && res;
+}
+
+bool PN532_BLE::writeCommand(Command cmd, const std::vector<uint8_t>& data) {
+    return writeCommand(cmd, const_cast<uint8_t*>(data.data()), data.size());
 }
 
 bool PN532_BLE::checkResponse(uint8_t cmd)
@@ -333,10 +353,9 @@ void PN532_BLE::setDevice(NimBLEAdvertisedDevice device)
 
 bool PN532_BLE::setNormalMode()
 {
-    std::vector<uint8_t> wakeup = {0x55, 0x55, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00} ;
+    std::vector<uint8_t> wakeup = {0x55, 0x55, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
     writeData(wakeup);
-    std::vector<uint8_t> data = {0x01};
-    return writeCommand(SAMConfiguration, data.data(), data.size());
+    return writeCommand(SAMConfiguration, {0x01});
 }
 
 bool PN532_BLE::getVersion()
@@ -346,6 +365,67 @@ bool PN532_BLE::getVersion()
 
 bool PN532_BLE::hf14aScan()
 {
-    std::vector<uint8_t> data = {0x01, 0x00};
-    return writeCommand(InListPassiveTarget, data.data(), data.size());
+    return writeCommand(InListPassiveTarget, {0x01, 0x00});
+}
+
+std::vector<uint8_t> PN532_BLE::sendData(std::vector<uint8_t> data, bool append_crc)
+{
+    if (append_crc)
+    {
+        appendCrcA(data.data(), data.size());
+    }
+
+    writeCommand(InCommunicateThru, data.data(), data.size());
+    return std::vector<uint8_t>(cmdResponse.data, cmdResponse.data + cmdResponse.dataSize);
+}
+
+std::vector<uint8_t> PN532_BLE::send7bit(std::vector<uint8_t> data)
+{
+    writeCommand(WriteRegister, {0x63, 0x3D, 0x07});
+    std::vector<uint8_t> responseData = sendData(data, false);
+    writeCommand(WriteRegister, {0x63, 0x3D, 0x00});
+    return responseData;
+}
+
+bool PN532_BLE::resetRegister()
+{
+    return writeCommand(WriteRegister, {0x63, 0x02, 0x00, 0x63, 0x03, 0x00});
+}
+
+bool PN532_BLE::halt()
+{
+    sendData({0x50, 0x00}, false);
+    return true;
+}
+
+bool PN532_BLE::isGen1A(){
+    halt();
+    std::vector<uint8_t> unlock1 = send7bit({0x40});
+    Serial.println("Unlock 1: ");
+    for (int i = 0; i < unlock1.size(); i++)
+    {
+        Serial.print(unlock1[i] < 0x10 ? " 0" : " ");
+        Serial.print(unlock1[i], HEX);
+    }
+    if (unlock1.size() == 2 && unlock1[1] == 0x0A) {
+        std::vector<uint8_t> unlock2 = sendData({0x43}, false);
+        Serial.println("Unlock 2: ");
+        for (int i = 0; i < unlock2.size(); i++)
+        {
+            Serial.print(unlock2[i] < 0x10 ? " 0" : " ");
+            Serial.print(unlock2[i], HEX);
+        }
+        if (unlock2.size() == 2 && unlock2[1] == 0x0A) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool PN532_BLE::isGen3(){
+    return false;
+}
+
+bool PN532_BLE::isGen4(){
+    return false;
 }
