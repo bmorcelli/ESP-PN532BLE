@@ -18,11 +18,11 @@ uint8_t dcs(uint8_t *data, size_t length)
     return (0x00 - checksum) & 0xFF;
 }
 
-void appendCrcA(uint8_t *data, size_t length)
+void appendCrcA(std::vector<uint8_t> &data)
 {
     uint16_t crc = 0x6363; // Initial value for CRC-A
 
-    for (size_t i = 0; i < length; i++)
+    for (size_t i = 0; i < data.size(); i++)
     {
         uint8_t ch = data[i] ^ (crc & 0xFF);
         ch = (ch ^ (ch << 4)) & 0xFF;
@@ -30,8 +30,35 @@ void appendCrcA(uint8_t *data, size_t length)
     }
 
     crc &= 0xFFFF;
-    data[length] = crc & 0xFF;
-    data[length + 1] = crc >> 8;
+    data.push_back(crc & 0xFF);
+    data.push_back(crc >> 8);
+}
+
+String bytes2HexString(std::vector<uint8_t> *data, uint8_t dataSize)
+{
+    String hexString = "";
+    for (size_t i = 0; i < dataSize; i++)
+    {
+        hexString += (*data)[i] < 0x10 ? " 0" : " ";
+        hexString += String((*data)[i], HEX);
+    }
+    hexString.toUpperCase();
+    return hexString;
+}
+
+std::vector<uint8_t> hexStringToUint8Array(const std::string& hexString) {
+    std::vector<uint8_t> result;
+    if (hexString.length() % 2 != 0) {
+        throw std::invalid_argument("Hex string length must be even.");
+    }
+
+    for (size_t i = 0; i < hexString.length(); i += 2) {
+        std::string byteString = hexString.substr(i, 2);
+        uint8_t byte = static_cast<uint8_t>(std::stoul(byteString, nullptr, 16));
+        result.push_back(byte);
+    }
+
+    return result;
 }
 
 PN532_BLE::PN532_BLE(bool debug) { _debug = debug; }
@@ -178,12 +205,36 @@ bool PN532_BLE::connectToDevice()
         return false;
     }
 
-    chrWrite = pSvc->getCharacteristic(chrTxUUID);
-    chrNotify = pSvc->getCharacteristic(chrRxUUID);
+    auto characteristics = pSvc->getCharacteristics(true);
+    Serial.println("Characteristics Size:");
+    Serial.println(characteristics->size());
 
-    if (!chrWrite || !chrNotify)
+    for (auto &characteristic : *characteristics)
     {
-        Serial.println("Characteristics do not exist");
+        if (characteristic->canWrite())
+        {
+            chrWrite = characteristic;
+            break;
+        }
+    }
+    for (auto &characteristic : *characteristics)
+    {
+        if (characteristic->canNotify())
+        {
+            chrNotify = characteristic;
+            break;
+        }
+    }
+
+    if (!chrWrite)
+    {
+        Serial.println("Write characteristic does not exist");
+        return false;
+    }
+
+    if (!chrNotify)
+    {
+        Serial.println("Notify characteristic does not exist");
         return false;
     }
 
@@ -341,16 +392,44 @@ bool PN532_BLE::getVersion()
     return writeCommand(GetFirmwareVersion);
 }
 
-bool PN532_BLE::hf14aScan()
+PN532_BLE::Iso14aTagInfo PN532_BLE::hf14aScan()
 {
-    return writeCommand(InListPassiveTarget, {0x01, 0x00});
+    bool res = writeCommand(InListPassiveTarget, {0x01, 0x00});
+    if (!res)
+    {
+        return PN532_BLE::Iso14aTagInfo();
+    }
+    u_int8_t *data = cmdResponse.data;
+    u_int8_t dataSize = cmdResponse.dataSize;
+    Iso14aTagInfo tagInfo = parseHf14aScan(data, dataSize);
+    return tagInfo;
+}
+
+PN532_BLE::Iso14aTagInfo PN532_BLE::parseHf14aScan(uint8_t *data, uint8_t dataSize)
+{
+    Iso14aTagInfo tagInfo;
+    tagInfo.atqa = {data[2], data[3]};
+    tagInfo.sak = data[4];
+    tagInfo.uidSize = data[5];
+    tagInfo.uid.assign(data + 6, data + 6 + tagInfo.uidSize);
+    tagInfo.uid_hex = "";
+    for (size_t i = 0; i < tagInfo.uid.size(); i++)
+    {
+        tagInfo.uid_hex += tagInfo.uid[i] < 0x10 ? " 0" : " ";
+        tagInfo.uid_hex += String(tagInfo.uid[i], HEX);
+    }
+    tagInfo.uid_hex.toUpperCase();
+    tagInfo.atqa_hex = bytes2HexString(&tagInfo.atqa, 2);
+    std::vector<uint8_t> sakVector = {tagInfo.sak};
+    tagInfo.sak_hex = bytes2HexString(&sakVector, 1);
+    return tagInfo;
 }
 
 std::vector<uint8_t> PN532_BLE::sendData(std::vector<uint8_t> data, bool append_crc)
 {
     if (append_crc)
     {
-        appendCrcA(data.data(), data.size());
+        appendCrcA(data);
     }
 
     writeCommand(InCommunicateThru, data.data(), data.size());
@@ -396,12 +475,111 @@ bool PN532_BLE::isGen1A()
     return false;
 }
 
-bool PN532_BLE::isGen3()
+bool PN532_BLE::selectTag()
 {
+    PN532_BLE::Iso14aTagInfo tag_info = hf14aScan();
+    halt();
+    if (tag_info.uid.empty())
+    {
+        Serial.println("No tag found");
+        return false;
+    }
+    size_t uid_length = tag_info.uid.size();
+    if (_debug)
+    {
+        Serial.print("Found UID: ");
+        Serial.println(tag_info.uid_hex);
+    }
+
+    std::vector<uint8_t> wupa_result = send7bit({0x52});
+    if (_debug)
+    {
+        Serial.print("WUPA: ");
+        Serial.println(bytes2HexString(&wupa_result, wupa_result.size()));
+    }
+
+    auto anti_coll_result = sendData({0x93, 0x20}, false);
+    if (_debug)
+    {
+        Serial.print("Anticollision CL1: ");
+        Serial.println(bytes2HexString(&anti_coll_result, anti_coll_result.size()));
+    }
+
+    if (anti_coll_result[0] != 0x00)
+    {
+        if (_debug)
+        {
+            Serial.println("Anticollision failed");
+        }
+        return false;
+    }
+
+    std::vector<uint8_t> anti_coll_data(anti_coll_result.begin() + 1, anti_coll_result.end());
+    std::vector<uint8_t> select_data = {0x93, 0x70};
+    select_data.insert(select_data.end(), anti_coll_data.begin(), anti_coll_data.end());
+    auto select_result = sendData(select_data, true);
+    if (_debug)
+    {
+        Serial.print("Select CL1: ");
+        Serial.println(bytes2HexString(&select_result, select_result.size()));
+    }
+
+    if (uid_length == 4)
+    {
+        return select_result.size() > 1 && select_result[0] == 0x00;
+    }
+    else if (uid_length == 7)
+    {
+        auto anti_coll2_result = sendData({0x95, 0x20}, false);
+        if (_debug)
+        {
+            Serial.print("Anticollision CL2: ");
+            Serial.println(bytes2HexString(&anti_coll2_result, anti_coll2_result.size()));
+        }
+        if (anti_coll2_result[0] != 0x00)
+        {
+            if (_debug)
+            {
+                Serial.println("Anticollision CL2 failed");
+            }
+            return false;
+        }
+        std::vector<uint8_t> anti_coll2_data(anti_coll2_result.begin() + 1, anti_coll2_result.end());
+        std::vector<uint8_t> select2_data = {0x95, 0x70};
+        select2_data.insert(select2_data.end(), anti_coll2_data.begin(), anti_coll2_data.end());
+        auto select2_result = sendData(select2_data, true);
+        if (_debug)
+        {
+            Serial.print("Select CL2: ");
+            Serial.println(bytes2HexString(&select2_result, select2_result.size()));
+        }
+        return select2_result.size() > 1 && select2_result[0] == 0x00;
+    }
     return false;
 }
 
-bool PN532_BLE::isGen4()
+bool PN532_BLE::isGen3()
 {
-    return false;
+    bool selected = selectTag();
+    if (!selected)
+    {
+        return false;
+    }
+    std::vector<uint8_t> result = sendData({0x30, 0x00}, true);
+    return result.size() >= 16;
+}
+
+bool PN532_BLE::isGen4(std::string pwd)
+{
+    bool selected = selectTag();
+    if (!selected)
+    {
+        return false;
+    }
+    std::vector<uint8_t> auth_data = {0xCF};
+    std::vector<uint8_t> pwd_bytes = hexStringToUint8Array(pwd);
+    auth_data.insert(auth_data.end(), pwd_bytes.begin(), pwd_bytes.end());
+    auth_data.push_back(0xC6);
+    std::vector<uint8_t> result = sendData(auth_data, true);
+    return result.size() >= 15;
 }

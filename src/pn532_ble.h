@@ -84,12 +84,25 @@ public:
 
     bool setNormalMode();
     bool getVersion();
-    bool hf14aScan();
+
+    typedef struct 
+    {
+        std::vector<uint8_t> atqa;
+        uint8_t sak;
+        uint8_t uidSize;
+        std::vector<uint8_t> uid;
+        String uid_hex;
+        String sak_hex;
+        String atqa_hex;
+    } Iso14aTagInfo;
+
+    Iso14aTagInfo hf14aScan();
     std::vector<uint8_t> sendData(std::vector<uint8_t> data, bool append_crc);
     std::vector<uint8_t> send7bit(std::vector<uint8_t> data);
     bool isGen1A();
+    bool selectTag();
     bool isGen3();
-    bool isGen4();
+    bool isGen4(std::string pwd);
 
     typedef struct {
         byte size;
@@ -109,6 +122,8 @@ public:
         uint8_t data[200];
     } CmdResponse;
 
+    
+
     CmdResponse rsp;
     CmdResponse cmdResponse;
     uint8_t mifareDefaultKey[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
@@ -116,8 +131,8 @@ public:
 
 private:
     NimBLEUUID serviceUUID = NimBLEUUID("FFE0");
-    NimBLEUUID chrTxUUID = NimBLEUUID("FFE1");
-    NimBLEUUID chrRxUUID = NimBLEUUID("FFE1");
+    NimBLEUUID chrWriteUUID = NimBLEUUID("FFE1");
+    NimBLEUUID chrNotifyUUID = NimBLEUUID("FFE1");
 
     NimBLERemoteService *pSvc = nullptr;
     NimBLERemoteCharacteristic *chrWrite = nullptr;
@@ -132,6 +147,8 @@ private:
 
     bool resetRegister();
     bool halt();
+
+    Iso14aTagInfo parseHf14aScan(uint8_t *data, uint8_t dataSize);
 };
 
 #endif // PN532_BLE_H
