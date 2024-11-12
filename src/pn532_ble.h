@@ -82,6 +82,7 @@ public:
     NimBLEAdvertisedDevice _device;
     std::string getName() { return _device.getName(); }
 
+    void wakeup();
     bool setNormalMode();
     bool getVersion();
 
@@ -94,23 +95,18 @@ public:
         String uid_hex;
         String sak_hex;
         String atqa_hex;
+        String type;
     } Iso14aTagInfo;
+    Iso14aTagInfo hf14aTagInfo;
 
     Iso14aTagInfo hf14aScan();
+    bool mfAuth(std::vector<uint8_t> uid, uint8_t block, uint8_t *key, bool useKeyA);
     std::vector<uint8_t> sendData(std::vector<uint8_t> data, bool append_crc);
     std::vector<uint8_t> send7bit(std::vector<uint8_t> data);
     bool isGen1A();
     bool selectTag();
     bool isGen3();
     bool isGen4(std::string pwd);
-
-    typedef struct {
-        byte size;
-        byte uidByte[10];
-        byte sak;
-        byte atqaByte[2];
-    } HfTag;
-    HfTag hfTagData;
 
     typedef struct
     {
@@ -122,17 +118,13 @@ public:
         uint8_t data[200];
     } CmdResponse;
 
-    
-
-    CmdResponse rsp;
     CmdResponse cmdResponse;
     uint8_t mifareDefaultKey[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
     uint8_t mifareKey[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
 private:
-    NimBLEUUID serviceUUID = NimBLEUUID("FFE0");
-    NimBLEUUID chrWriteUUID = NimBLEUUID("FFE1");
-    NimBLEUUID chrNotifyUUID = NimBLEUUID("FFE1");
+    std::vector<NimBLEUUID> serviceUUIDs = {NimBLEUUID("FFF0"), NimBLEUUID("FFE0")};
+    NimBLERemoteService *getService(NimBLEClient *pClient);
 
     NimBLERemoteService *pSvc = nullptr;
     NimBLERemoteCharacteristic *chrWrite = nullptr;
@@ -149,6 +141,7 @@ private:
     bool halt();
 
     Iso14aTagInfo parseHf14aScan(uint8_t *data, uint8_t dataSize);
+    String getTagType();
 };
 
 #endif // PN532_BLE_H

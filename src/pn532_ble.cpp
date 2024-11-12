@@ -46,13 +46,16 @@ String bytes2HexString(std::vector<uint8_t> *data, uint8_t dataSize)
     return hexString;
 }
 
-std::vector<uint8_t> hexStringToUint8Array(const std::string& hexString) {
+std::vector<uint8_t> hexStringToUint8Array(const std::string &hexString)
+{
     std::vector<uint8_t> result;
-    if (hexString.length() % 2 != 0) {
+    if (hexString.length() % 2 != 0)
+    {
         throw std::invalid_argument("Hex string length must be even.");
     }
 
-    for (size_t i = 0; i < hexString.length(); i += 2) {
+    for (size_t i = 0; i < hexString.length(); i += 2)
+    {
         std::string byteString = hexString.substr(i, 2);
         uint8_t byte = static_cast<uint8_t>(std::stoul(byteString, nullptr, 16));
         result.push_back(byte);
@@ -61,18 +64,20 @@ std::vector<uint8_t> hexStringToUint8Array(const std::string& hexString) {
     return result;
 }
 
+std::vector<uint8_t> pn532bleBuffer;
+
 PN532_BLE::PN532_BLE(bool debug) { _debug = debug; }
 
 PN532_BLE::~PN532_BLE()
 {
     if (NimBLEDevice::getInitialized())
     {
+        pn532bleBuffer.clear();
         NimBLEDevice::deinit(true);
     }
 }
 
 std::vector<PN532_BLE::CmdResponse> pn532Responses;
-PN532_BLE::CmdResponse rsp;
 
 class scanCallbacks : public NimBLEAdvertisedDeviceCallbacks
 {
@@ -96,9 +101,22 @@ bool isCompleteFrame(uint8_t *pData, size_t length)
     uint8_t len = pData[9];
     uint8_t lcs = pData[10];
 
+    Serial.print("Length: ");
+    Serial.println(length);
+
+    Serial.print("Data Length: ");
+    Serial.println(len);
+
+    if (len + 13 < length)
+    {
+        Serial.println("Invalid length");
+        return false;
+    }
+
     if ((len + lcs) & 0xFF != 0x00)
     {
         Serial.println("Length checksum failed");
+        pn532bleBuffer.clear();
         return false;
     }
 
@@ -116,22 +134,26 @@ bool isCompleteFrame(uint8_t *pData, size_t length)
 
 void pn532NotifyCallBack(NimBLERemoteCharacteristic *pRemoteCharacteristic, uint8_t *pData, size_t length, bool isNotify)
 {
-    memcpy(&rsp.raw[rsp.length], pData, length);
-    rsp.length += length;
-
+    // add data to buffer
+    pn532bleBuffer.insert(pn532bleBuffer.end(), pData, pData + length);
     Serial.print("PN532 ->");
-    for (int i = 0; i < rsp.length; i++)
+    for (int i = 0; i < pn532bleBuffer.size(); i++)
     {
-        Serial.print(rsp.raw[i] < 0x10 ? " 0" : " ");
-        Serial.print(rsp.raw[i], HEX);
+        Serial.print(pn532bleBuffer[i] < 0x10 ? " 0" : " ");
+        Serial.print(pn532bleBuffer[i], HEX);
     }
     Serial.println();
 
-    if (!isCompleteFrame(rsp.raw, rsp.length))
+    if (!isCompleteFrame(pn532bleBuffer.data(), pn532bleBuffer.size()))
     {
         Serial.println("Invalid frame");
         return;
     }
+
+    PN532_BLE::CmdResponse rsp;
+    memcpy(rsp.raw, pn532bleBuffer.data(), pn532bleBuffer.size());
+    rsp.length = pn532bleBuffer.size();
+    rsp.command = rsp.raw[12] - 1;
 
     uint8_t dataSize = rsp.raw[9];
     rsp.dataSize = dataSize - 2;
@@ -139,12 +161,11 @@ void pn532NotifyCallBack(NimBLERemoteCharacteristic *pRemoteCharacteristic, uint
 
     if (rsp.dataSize > 0)
     {
-        memcpy(rsp.data, rsp.raw + 13, rsp.raw[9] - 2);
+        memcpy(rsp.data, rsp.raw + 13, rsp.dataSize);
     }
 
     pn532Responses.push_back(rsp);
-    rsp.length = 0;
-    rsp.dataSize = 0;
+    pn532bleBuffer.clear();
 }
 
 bool PN532_BLE::searchForDevice()
@@ -178,6 +199,16 @@ bool PN532_BLE::isConnected()
     return chrWrite != nullptr && chrNotify != nullptr;
 }
 
+NimBLERemoteService *PN532_BLE::getService(NimBLEClient *pClient) {
+    for (const auto &uuid : serviceUUIDs) {
+        NimBLERemoteService *service = pClient->getService(uuid);
+        if (service) {
+            return service;
+        }
+    }
+    return nullptr;
+}
+
 bool PN532_BLE::connectToDevice()
 {
     NimBLEClient *pClient = NimBLEDevice::createClient();
@@ -198,7 +229,7 @@ bool PN532_BLE::connectToDevice()
 
     delay(200);
 
-    pSvc = pClient->getService(serviceUUID);
+    pSvc = getService(pClient);
     if (!pSvc)
     {
         Serial.println("Service does not exist");
@@ -239,15 +270,12 @@ bool PN532_BLE::connectToDevice()
     }
 
     chrNotify->subscribe(true, pn532NotifyCallBack);
-
     return true;
 }
 
 bool PN532_BLE::writeCommand(Command cmd, uint8_t *data, size_t length)
 {
-    // reset rsp length for new task
-    rsp.length = 0;
-    rsp.dataSize = 0;
+    pn532bleBuffer.clear();
 
     if (data == nullptr)
     {
@@ -297,7 +325,7 @@ bool PN532_BLE::checkResponse(uint8_t cmd)
     unsigned long startTime = millis();
     while (pn532Responses.empty())
     {
-        if (millis() - startTime > 3000)
+        if (millis() - startTime > 4000)
         {
             Serial.println("Timeout out");
             return false;
@@ -352,16 +380,16 @@ bool PN532_BLE::checkResponse(uint8_t cmd)
 
     bool success = true;
 
-    if (success && cmdResponse.command == InListPassiveTarget)
-    {
-        hfTagData.size = cmdResponse.data[0];
-        memcpy(hfTagData.uidByte, cmdResponse.data + 1, hfTagData.size);
+    // if (success && cmdResponse.command == InListPassiveTarget)
+    // {
+    //     hfTagData.size = cmdResponse.data[0];
+    //     memcpy(hfTagData.uidByte, cmdResponse.data + 1, hfTagData.size);
 
-        hfTagData.atqaByte[1] = cmdResponse.data[1 + hfTagData.size];
-        hfTagData.atqaByte[0] = cmdResponse.data[2 + hfTagData.size];
+    //     hfTagData.atqaByte[1] = cmdResponse.data[1 + hfTagData.size];
+    //     hfTagData.atqaByte[0] = cmdResponse.data[2 + hfTagData.size];
 
-        hfTagData.sak = cmdResponse.data[3 + hfTagData.size];
-    }
+    //     hfTagData.sak = cmdResponse.data[3 + hfTagData.size];
+    // }
 
     pn532Responses.clear();
     return success;
@@ -380,10 +408,30 @@ void PN532_BLE::setDevice(NimBLEAdvertisedDevice device)
     _device = device;
 }
 
+String PN532_BLE::getTagType() {
+    switch (hf14aTagInfo.sak) {
+        case 0x09:
+            return "MIFARE Mini";
+        case 0x08:
+        case 0x88:
+            return "MIFARE 1K";
+        case 0x18:
+            return "MIFARE 4K";
+        case 0x00:
+            return "MIFARE Ultralight";
+        default:
+            return "Unknown";
+    }
+}
+
+void PN532_BLE::wakeup()
+{
+    writeData({0x55, 0x55, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
+}
+
 bool PN532_BLE::setNormalMode()
 {
-    std::vector<uint8_t> wakeup = {0x55, 0x55, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-    writeData(wakeup);
+    wakeup();
     return writeCommand(SAMConfiguration, {0x01});
 }
 
@@ -401,28 +449,43 @@ PN532_BLE::Iso14aTagInfo PN532_BLE::hf14aScan()
     }
     u_int8_t *data = cmdResponse.data;
     u_int8_t dataSize = cmdResponse.dataSize;
-    Iso14aTagInfo tagInfo = parseHf14aScan(data, dataSize);
-    return tagInfo;
+    return parseHf14aScan(data, dataSize);
 }
 
 PN532_BLE::Iso14aTagInfo PN532_BLE::parseHf14aScan(uint8_t *data, uint8_t dataSize)
 {
-    Iso14aTagInfo tagInfo;
-    tagInfo.atqa = {data[2], data[3]};
-    tagInfo.sak = data[4];
-    tagInfo.uidSize = data[5];
-    tagInfo.uid.assign(data + 6, data + 6 + tagInfo.uidSize);
-    tagInfo.uid_hex = "";
-    for (size_t i = 0; i < tagInfo.uid.size(); i++)
+    hf14aTagInfo.atqa = {data[2], data[3]};
+    hf14aTagInfo.sak = data[4];
+    hf14aTagInfo.uidSize = data[5];
+    hf14aTagInfo.uid.assign(data + 6, data + 6 + hf14aTagInfo.uidSize);
+    hf14aTagInfo.uid_hex = "";
+    for (size_t i = 0; i < hf14aTagInfo.uid.size(); i++)
     {
-        tagInfo.uid_hex += tagInfo.uid[i] < 0x10 ? " 0" : " ";
-        tagInfo.uid_hex += String(tagInfo.uid[i], HEX);
+        hf14aTagInfo.uid_hex += hf14aTagInfo.uid[i] < 0x10 ? "0" : "";
+        hf14aTagInfo.uid_hex += String(hf14aTagInfo.uid[i], HEX);
     }
-    tagInfo.uid_hex.toUpperCase();
-    tagInfo.atqa_hex = bytes2HexString(&tagInfo.atqa, 2);
-    std::vector<uint8_t> sakVector = {tagInfo.sak};
-    tagInfo.sak_hex = bytes2HexString(&sakVector, 1);
-    return tagInfo;
+    hf14aTagInfo.uid_hex.toUpperCase();
+    hf14aTagInfo.atqa_hex = bytes2HexString(&hf14aTagInfo.atqa, 2);
+    std::vector<uint8_t> sakVector = {hf14aTagInfo.sak};
+    hf14aTagInfo.sak_hex = bytes2HexString(&sakVector, 1);
+    hf14aTagInfo.type = getTagType();
+    return hf14aTagInfo;
+}
+
+bool PN532_BLE::mfAuth(std::vector<uint8_t> uid, uint8_t block, uint8_t *key, bool useKeyA)
+{
+    std::vector<uint8_t> authData = {0x40, 0x01,};
+    authData.push_back(useKeyA ? 0x60 : 0x61);
+    authData.push_back(block);
+    authData.insert(authData.end(), key, key + 6);
+    uint8_t uidLength = uid.size();
+    authData.insert(authData.end(), uid.end() - 4, uid.end());
+    bool res = writeCommand(InDataExchange, authData);
+    if (!res)
+    {
+        return false;
+    }
+    return cmdResponse.dataSize >= 1 && cmdResponse.data[0] == 0x00;
 }
 
 std::vector<uint8_t> PN532_BLE::sendData(std::vector<uint8_t> data, bool append_crc)
