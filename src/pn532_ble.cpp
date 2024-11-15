@@ -474,7 +474,7 @@ PN532_BLE::Iso14aTagInfo PN532_BLE::parseHf14aScan(uint8_t *data, uint8_t dataSi
 
 bool PN532_BLE::mfAuth(std::vector<uint8_t> uid, uint8_t block, uint8_t *key, bool useKeyA)
 {
-    std::vector<uint8_t> authData = {0x40, 0x01,};
+    std::vector<uint8_t> authData = {0x01};
     authData.push_back(useKeyA ? 0x60 : 0x61);
     authData.push_back(block);
     authData.insert(authData.end(), key, key + 6);
@@ -486,6 +486,21 @@ bool PN532_BLE::mfAuth(std::vector<uint8_t> uid, uint8_t block, uint8_t *key, bo
         return false;
     }
     return cmdResponse.dataSize >= 1 && cmdResponse.data[0] == 0x00;
+}
+
+std::vector<uint8_t> PN532_BLE::mfRdbl(uint8_t block)
+{
+    std::vector<uint8_t> readBlockCommands = {0x01, 0x30, block};
+    bool res = writeCommand(InDataExchange, readBlockCommands);
+    return std::vector<uint8_t>(cmdResponse.data, cmdResponse.data + cmdResponse.dataSize);
+}
+
+bool PN532_BLE::mfWrbl(uint8_t block, std::vector<uint8_t> data)
+{
+    std::vector<uint8_t> writeBlockCommands = {0x01, 0xA0, block};
+    writeBlockCommands.insert(writeBlockCommands.end(), data.begin(), data.end());
+    bool res = writeCommand(InDataExchange, writeBlockCommands);
+    return res && cmdResponse.dataSize >= 1 && cmdResponse.data[0] == 0x00;
 }
 
 std::vector<uint8_t> PN532_BLE::sendData(std::vector<uint8_t> data, bool append_crc)

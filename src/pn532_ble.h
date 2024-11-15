@@ -83,6 +83,7 @@ public:
     std::string getName() { return _device.getName(); }
 
     void wakeup();
+    bool halt();
     bool setNormalMode();
     bool getVersion();
 
@@ -101,6 +102,8 @@ public:
 
     Iso14aTagInfo hf14aScan();
     bool mfAuth(std::vector<uint8_t> uid, uint8_t block, uint8_t *key, bool useKeyA);
+    std::vector<uint8_t> mfRdbl(uint8_t block);
+    bool mfWrbl(uint8_t block, std::vector<uint8_t> data);
     std::vector<uint8_t> sendData(std::vector<uint8_t> data, bool append_crc);
     std::vector<uint8_t> send7bit(std::vector<uint8_t> data);
     bool isGen1A();
@@ -138,7 +141,6 @@ private:
     bool isCompleteFrame();
 
     bool resetRegister();
-    bool halt();
 
     Iso14aTagInfo parseHf14aScan(uint8_t *data, uint8_t dataSize);
     String getTagType();
