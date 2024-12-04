@@ -34,6 +34,29 @@ void appendCrcA(std::vector<uint8_t> &data)
     data.push_back(crc >> 8);
 }
 
+void appendCrc16Ccitt(std::vector<uint8_t> &data)
+{
+    uint16_t crc = 0xFFFF;
+    for (size_t i = 0; i < data.size(); i++)
+    {
+        crc ^= data[i];
+        for (int j = 0; j < 8; j++)
+        {
+            if (crc & 1)
+            {
+                crc = (crc >> 1) ^ 0x8408;
+            }
+            else
+            {
+                crc >>= 1;
+            }
+        }
+    }
+    crc ^= 0xFFFF;
+    data.push_back(crc & 0xFF);
+    data.push_back((crc >> 8) & 0xFF);
+}
+
 String bytes2HexString(std::vector<uint8_t> *data, uint8_t dataSize)
 {
     String hexString = "";
@@ -197,6 +220,11 @@ bool PN532_BLE::searchForDevice()
 bool PN532_BLE::isConnected()
 {
     return chrWrite != nullptr && chrNotify != nullptr;
+}
+
+bool PN532_BLE::isPN532Killer()
+{
+    return _device.getName().find("PN532Killer") != std::string::npos;
 }
 
 NimBLERemoteService *PN532_BLE::getService(NimBLEClient *pClient) {
@@ -422,6 +450,26 @@ String PN532_BLE::getTagType() {
         default:
             return "Unknown";
     }
+}
+
+String PN532_BLE::getHf14aTagType() {
+    switch (hf14aTagInfo.sak) {
+        case 0x09:
+            return "MIFARE Mini";
+        case 0x08:
+        case 0x88:
+            return "MIFARE 1K";
+        case 0x18:
+            return "MIFARE 4K";
+        case 0x00:
+            return "MIFARE Ultralight";
+        default:
+            return "Unknown";
+    }
+}
+
+String PN532_BLE::getHf15TagType() {
+    return "ISO15693";
 }
 
 void PN532_BLE::wakeup()
@@ -660,4 +708,117 @@ bool PN532_BLE::isGen4(std::string pwd)
     auth_data.push_back(0xC6);
     std::vector<uint8_t> result = sendData(auth_data, true);
     return result.size() >= 15;
+}
+
+PN532_BLE::Iso15TagInfo PN532_BLE::hf15Scan()
+{
+    bool res = writeCommand(InListPassiveTarget, {0x01, 0x05});
+    if (!res)
+    {
+        return PN532_BLE::Iso15TagInfo();
+    }
+    u_int8_t *data = cmdResponse.data;
+    u_int8_t dataSize = cmdResponse.dataSize;
+    return parseHf15Scan(data, dataSize);
+}
+
+PN532_BLE::Iso15TagInfo PN532_BLE::parseHf15Scan(uint8_t *data, uint8_t dataSize)
+{
+    Iso15TagInfo tagInfo;
+    size_t offset = 0;
+
+    if (dataSize < 10)
+    {
+        return tagInfo;
+    }
+
+    while (offset < dataSize)
+    {
+        uint8_t tagType = data[offset];
+        offset += 1;
+        uint8_t tagNum = data[offset];
+        offset += 1;
+        std::vector<uint8_t> uid(data + offset, data + offset + 8);
+        offset += 8;
+        std::reverse(uid.begin(), uid.end());
+        tagInfo.uid = uid;
+        tagInfo.uid_hex = bytes2HexString(&uid, 8);
+    }
+
+    return tagInfo;
+}
+
+std::vector<uint8_t> PN532_BLE::sendHf15Data(std::vector<uint8_t> data, bool append_crc, bool no_check_response)
+{
+    if (append_crc)
+    {
+        appendCrc16Ccitt(data);
+    }
+
+    uint8_t req_ack = no_check_response ? 0x00 : 0x80;
+
+    data.insert(data.begin(), 0); // insert tag number
+    data.insert(data.begin(), req_ack); // insert req ack
+
+    writeCommand(InCommunicateThru, data.data(), data.size());
+    return std::vector<uint8_t>(cmdResponse.data, cmdResponse.data + cmdResponse.dataSize);
+}
+
+PN532_BLE::Iso15TagInfo PN532_BLE::parseHf15TagInfo(uint8_t *data, uint8_t dataSize)
+{
+    PN532_BLE::Iso15TagInfo tagInfo;
+    if (dataSize > 15) {
+        tagInfo.dsfid = data[10];
+        tagInfo.afi = data[11];
+        tagInfo.blockSize = data[12] + 1;
+        tagInfo.icRef = data[14];
+        tagInfo.uid.assign(data + 2, data + 10);
+        std::reverse(tagInfo.uid.begin(), tagInfo.uid.end());
+        tagInfo.uid_hex = bytes2HexString(&tagInfo.uid, tagInfo.uid.size());
+    }
+    return tagInfo;
+}
+
+PN532_BLE::Iso15TagInfo PN532_BLE::hf15Info()
+{
+    std::vector<uint8_t> result = sendHf15Data({0x2B, 0x00}, true, false);
+    if (result.size() < 16)
+    {
+        return PN532_BLE::Iso15TagInfo();
+    }
+    return parseHf15TagInfo(result.data(), result.size());
+}
+
+PN532_BLE::LfTagInfo PN532_BLE::lfScan()
+{
+    bool res = writeCommand(InListPassiveTarget, {0x01, 0x06});
+    if (!res)
+    {
+        return PN532_BLE::LfTagInfo();
+    }
+    u_int8_t *data = cmdResponse.data;
+    u_int8_t dataSize = cmdResponse.dataSize;
+    return parseLfScan(data, dataSize);
+}
+
+PN532_BLE::LfTagInfo PN532_BLE::parseLfScan(uint8_t *data, uint8_t dataSize)
+{
+    LfTagInfo tagInfo;
+    size_t offset = 0;
+
+    while (offset < dataSize)
+    {
+        uint8_t tagType = data[offset];
+        offset += 1;
+        uint8_t tagNum = data[offset];
+        offset += 1;
+        std::vector<uint8_t> uid(data + offset, data + offset + 5);
+        offset += 5;
+
+        tagInfo.uid = uid;
+        tagInfo.id_dec = (uid[0] << 24) | (uid[1] << 16) | (uid[2] << 8) | uid[3];
+        tagInfo.uid_hex = bytes2HexString(&uid, 5);
+    }
+
+    return tagInfo;
 }

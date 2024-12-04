@@ -79,6 +79,7 @@ public:
     void writeData(const std::vector<uint8_t> &data);
     void setDevice(NimBLEAdvertisedDevice device);
     bool isConnected();
+    bool isPN532Killer();
     NimBLEAdvertisedDevice _device;
     std::string getName() { return _device.getName(); }
 
@@ -99,7 +100,6 @@ public:
         String type;
     } Iso14aTagInfo;
     Iso14aTagInfo hf14aTagInfo;
-
     Iso14aTagInfo hf14aScan();
     bool mfAuth(std::vector<uint8_t> uid, uint8_t block, uint8_t *key, bool useKeyA);
     std::vector<uint8_t> mfRdbl(uint8_t block);
@@ -110,6 +110,30 @@ public:
     bool selectTag();
     bool isGen3();
     bool isGen4(std::string pwd);
+
+    typedef struct 
+    {
+        std::vector<uint8_t> uid;
+        String uid_hex;
+        uint8_t dsfid;
+        uint8_t afi;
+        uint8_t icRef;
+        uint8_t blockSize;
+    } Iso15TagInfo;
+    Iso15TagInfo hf15TagInfo;
+    std::vector<uint8_t> sendHf15Data(std::vector<uint8_t> data, bool append_crc, bool no_check_response);
+    Iso15TagInfo hf15Scan();
+    Iso15TagInfo hf15Info();
+
+    typedef struct 
+    {
+        std::vector<uint8_t> uid;
+        String uid_hex;
+        int id_dec;
+    } LfTagInfo;
+    LfTagInfo lfTagInfo;
+
+    LfTagInfo lfScan();
 
     typedef struct
     {
@@ -144,6 +168,11 @@ private:
 
     Iso14aTagInfo parseHf14aScan(uint8_t *data, uint8_t dataSize);
     String getTagType();
+    String getHf14aTagType();
+    Iso15TagInfo parseHf15Scan(uint8_t *data, uint8_t dataSize);
+    Iso15TagInfo parseHf15TagInfo(uint8_t *data, uint8_t dataSize);
+    String getHf15TagType();
+    LfTagInfo parseLfScan(uint8_t *data, uint8_t dataSize);
 };
 
 #endif // PN532_BLE_H
