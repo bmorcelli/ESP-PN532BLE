@@ -768,11 +768,11 @@ PN532_BLE::Iso15TagInfo PN532_BLE::parseHf15TagInfo(uint8_t *data, uint8_t dataS
 {
     PN532_BLE::Iso15TagInfo tagInfo;
     if (dataSize > 15) {
-        tagInfo.dsfid = data[10];
-        tagInfo.afi = data[11];
-        tagInfo.blockSize = data[12] + 1;
-        tagInfo.icRef = data[14];
-        tagInfo.uid.assign(data + 2, data + 10);
+        tagInfo.dsfid = data[11];
+        tagInfo.afi = data[12];
+        tagInfo.blockSize = data[13] + 1;
+        tagInfo.icRef = data[15];
+        tagInfo.uid.assign(data + 3, data + 11);
         std::reverse(tagInfo.uid.begin(), tagInfo.uid.end());
         tagInfo.uid_hex = bytes2HexString(&tagInfo.uid, tagInfo.uid.size());
     }
@@ -781,12 +781,19 @@ PN532_BLE::Iso15TagInfo PN532_BLE::parseHf15TagInfo(uint8_t *data, uint8_t dataS
 
 PN532_BLE::Iso15TagInfo PN532_BLE::hf15Info()
 {
-    std::vector<uint8_t> result = sendHf15Data({0x2B, 0x00}, true, false);
+    std::vector<uint8_t> result = sendHf15Data({0x02, 0x2B}, true, false);
     if (result.size() < 16)
     {
         return PN532_BLE::Iso15TagInfo();
     }
     return parseHf15TagInfo(result.data(), result.size());
+}
+
+std::vector<uint8_t> PN532_BLE::hf15Rdbl(uint8_t block)
+{
+    std::vector<uint8_t> readBlockCommands = {0x01, 0x20, block};
+    bool res = writeCommand(InDataExchange, readBlockCommands);
+    return std::vector<uint8_t>(cmdResponse.data, cmdResponse.data + cmdResponse.dataSize);
 }
 
 PN532_BLE::LfTagInfo PN532_BLE::lfScan()

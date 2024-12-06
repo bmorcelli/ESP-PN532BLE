@@ -124,6 +124,7 @@ public:
     std::vector<uint8_t> sendHf15Data(std::vector<uint8_t> data, bool append_crc, bool no_check_response);
     Iso15TagInfo hf15Scan();
     Iso15TagInfo hf15Info();
+    std::vector<uint8_t> hf15Rdbl(uint8_t block);
 
     typedef struct 
     {
