@@ -62,7 +62,7 @@ String bytes2HexString(std::vector<uint8_t> *data, uint8_t dataSize)
     String hexString = "";
     for (size_t i = 0; i < dataSize; i++)
     {
-        hexString += (*data)[i] < 0x10 ? " 0" : " ";
+        hexString += (*data)[i] < 0x10 ? "0" : "";
         hexString += String((*data)[i], HEX);
     }
     hexString.toUpperCase();
@@ -719,7 +719,8 @@ PN532_BLE::Iso15TagInfo PN532_BLE::hf15Scan()
     }
     u_int8_t *data = cmdResponse.data;
     u_int8_t dataSize = cmdResponse.dataSize;
-    return parseHf15Scan(data, dataSize);
+    hf15TagInfo = parseHf15Scan(data, dataSize);
+    return hf15TagInfo;
 }
 
 PN532_BLE::Iso15TagInfo PN532_BLE::parseHf15Scan(uint8_t *data, uint8_t dataSize)
@@ -794,6 +795,14 @@ std::vector<uint8_t> PN532_BLE::hf15Rdbl(uint8_t block)
     std::vector<uint8_t> readBlockCommands = {0x01, 0x20, block};
     bool res = writeCommand(InDataExchange, readBlockCommands);
     return std::vector<uint8_t>(cmdResponse.data, cmdResponse.data + cmdResponse.dataSize);
+}
+
+bool PN532_BLE::hf15Wrbl(uint8_t block, std::vector<uint8_t> data)
+{
+    std::vector<uint8_t> writeBlockCommands = {0x01, 0x21, block};
+    writeBlockCommands.insert(writeBlockCommands.end(), data.begin(), data.end());
+    bool res = writeCommand(InDataExchange, writeBlockCommands);
+    return res && cmdResponse.dataSize >= 1 && cmdResponse.data[0] == 0x00;
 }
 
 PN532_BLE::LfTagInfo PN532_BLE::lfScan()

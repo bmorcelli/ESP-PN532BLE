@@ -125,6 +125,7 @@ public:
     Iso15TagInfo hf15Scan();
     Iso15TagInfo hf15Info();
     std::vector<uint8_t> hf15Rdbl(uint8_t block);
+    bool hf15Wrbl(uint8_t block, std::vector<uint8_t> data);
 
     typedef struct 
     {
