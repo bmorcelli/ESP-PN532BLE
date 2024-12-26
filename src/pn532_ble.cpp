@@ -551,6 +551,14 @@ bool PN532_BLE::mfWrbl(uint8_t block, std::vector<uint8_t> data)
     return res && cmdResponse.dataSize >= 1 && cmdResponse.data[0] == 0x00;
 }
 
+bool PN532_BLE::mfuWrbl(uint8_t block, std::vector<uint8_t> data)
+{
+    std::vector<uint8_t> writeBlockCommands = {0x01, 0xA2, block};
+    writeBlockCommands.insert(writeBlockCommands.end(), data.begin(), data.end());
+    bool res = writeCommand(InDataExchange, writeBlockCommands);
+    return res && cmdResponse.dataSize >= 1 && cmdResponse.data[0] == 0x00;
+}
+
 std::vector<uint8_t> PN532_BLE::sendData(std::vector<uint8_t> data, bool append_crc)
 {
     if (append_crc)

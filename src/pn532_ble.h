@@ -104,6 +104,7 @@ public:
     bool mfAuth(std::vector<uint8_t> uid, uint8_t block, uint8_t *key, bool useKeyA);
     std::vector<uint8_t> mfRdbl(uint8_t block);
     bool mfWrbl(uint8_t block, std::vector<uint8_t> data);
+    bool mfuWrbl(uint8_t block, std::vector<uint8_t> data);
     std::vector<uint8_t> sendData(std::vector<uint8_t> data, bool append_crc);
     std::vector<uint8_t> send7bit(std::vector<uint8_t> data);
     bool isGen1A();
