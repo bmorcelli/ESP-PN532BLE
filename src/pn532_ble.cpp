@@ -846,3 +846,26 @@ PN532_BLE::LfTagInfo PN532_BLE::parseLfScan(uint8_t *data, uint8_t dataSize)
 
     return tagInfo;
 }
+
+std::vector<uint8_t> PN532_BLE::getData()
+{
+    bool res = writeCommand(TgGetData);
+    return std::vector<uint8_t>(cmdResponse.data, cmdResponse.data + cmdResponse.dataSize);
+}
+
+std::vector<uint8_t>  PN532_BLE::setData(const std::vector<uint8_t> &data)
+{
+    bool res = writeCommand(TgSetData, data);
+    return std::vector<uint8_t>(cmdResponse.data, cmdResponse.data + cmdResponse.dataSize);
+}
+
+bool PN532_BLE::inRelease()
+{
+    return writeCommand(InRelease, {0x00});
+}
+
+std::vector<uint8_t> PN532_BLE::tgInitAsTarget(const std::vector<uint8_t> &data)
+{
+    bool res = writeCommand(TgInitAsTarget, data);
+    return std::vector<uint8_t>(cmdResponse.data, cmdResponse.data + cmdResponse.dataSize);
+}

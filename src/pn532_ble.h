@@ -128,6 +128,11 @@ public:
     std::vector<uint8_t> hf15Rdbl(uint8_t block);
     bool hf15Wrbl(uint8_t block, std::vector<uint8_t> data);
 
+    std::vector<uint8_t> getData();
+    std::vector<uint8_t> setData(const std::vector<uint8_t> &data);
+    bool inRelease();
+    std::vector<uint8_t> tgInitAsTarget(const std::vector<uint8_t> &data);
+
     typedef struct 
     {
         std::vector<uint8_t> uid;
