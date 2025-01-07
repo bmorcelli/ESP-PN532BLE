@@ -7,6 +7,7 @@
  */
 
 #include "pn532_ble.h"
+#include <stdexcept>
 
 uint8_t dcs(uint8_t *data, size_t length)
 {

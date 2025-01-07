@@ -11,6 +11,7 @@
 
 #include <NimBLEDevice.h>
 #include <vector>
+#include <array>
 
 class PN532_BLE
 {
