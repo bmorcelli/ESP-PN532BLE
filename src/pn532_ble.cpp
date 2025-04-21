@@ -9,87 +9,6 @@
 #include "pn532_ble.h"
 #include <stdexcept>
 
-uint8_t dcs(uint8_t *data, size_t length)
-{
-    uint8_t checksum = 0;
-    for (size_t i = 0; i < length; i++)
-    {
-        checksum += data[i];
-    }
-    return (0x00 - checksum) & 0xFF;
-}
-
-void appendCrcA(std::vector<uint8_t> &data)
-{
-    uint16_t crc = 0x6363; // Initial value for CRC-A
-
-    for (size_t i = 0; i < data.size(); i++)
-    {
-        uint8_t ch = data[i] ^ (crc & 0xFF);
-        ch = (ch ^ (ch << 4)) & 0xFF;
-        crc = (crc >> 8) ^ (ch << 8) ^ (ch << 3) ^ (ch >> 4);
-    }
-
-    crc &= 0xFFFF;
-    data.push_back(crc & 0xFF);
-    data.push_back(crc >> 8);
-}
-
-void appendCrc16Ccitt(std::vector<uint8_t> &data)
-{
-    uint16_t crc = 0xFFFF;
-    for (size_t i = 0; i < data.size(); i++)
-    {
-        crc ^= data[i];
-        for (int j = 0; j < 8; j++)
-        {
-            if (crc & 1)
-            {
-                crc = (crc >> 1) ^ 0x8408;
-            }
-            else
-            {
-                crc >>= 1;
-            }
-        }
-    }
-    crc ^= 0xFFFF;
-    data.push_back(crc & 0xFF);
-    data.push_back((crc >> 8) & 0xFF);
-}
-
-String bytes2HexString(std::vector<uint8_t> *data, uint8_t dataSize)
-{
-    String hexString = "";
-    for (size_t i = 0; i < dataSize; i++)
-    {
-        hexString += (*data)[i] < 0x10 ? "0" : "";
-        hexString += String((*data)[i], HEX);
-    }
-    hexString.toUpperCase();
-    return hexString;
-}
-
-std::vector<uint8_t> hexStringToUint8Array(const std::string &hexString)
-{
-    std::vector<uint8_t> result;
-    if (hexString.length() % 2 != 0)
-    {
-        throw std::invalid_argument("Hex string length must be even.");
-    }
-
-    for (size_t i = 0; i < hexString.length(); i += 2)
-    {
-        std::string byteString = hexString.substr(i, 2);
-        uint8_t byte = static_cast<uint8_t>(std::stoul(byteString, nullptr, 16));
-        result.push_back(byte);
-    }
-
-    return result;
-}
-
-std::vector<uint8_t> pn532bleBuffer;
-
 PN532_BLE::PN532_BLE(bool debug) { _debug = debug; }
 
 PN532_BLE::~PN532_BLE()
@@ -100,8 +19,6 @@ PN532_BLE::~PN532_BLE()
         NimBLEDevice::deinit(true);
     }
 }
-
-std::vector<PN532_BLE::CmdResponse> pn532Responses;
 
 class scanCallbacks : public NimBLEAdvertisedDeviceCallbacks
 {
@@ -115,7 +32,7 @@ class scanCallbacks : public NimBLEAdvertisedDeviceCallbacks
     }
 };
 
-bool isCompleteFrame(uint8_t *pData, size_t length)
+bool PN532_BLE::isCompleteFrame(uint8_t *pData, size_t length)
 {
     if (length < 10)
     {
@@ -156,7 +73,8 @@ bool isCompleteFrame(uint8_t *pData, size_t length)
     return true;
 }
 
-void pn532NotifyCallBack(NimBLERemoteCharacteristic *pRemoteCharacteristic, uint8_t *pData, size_t length, bool isNotify)
+void PN532_BLE::NotifyCallBack(
+    NimBLERemoteCharacteristic *pRemoteCharacteristic, uint8_t *pData, size_t length, bool isNotify)
 {
     // add data to buffer
     pn532bleBuffer.insert(pn532bleBuffer.end(), pData, pData + length);
@@ -218,20 +136,17 @@ bool PN532_BLE::searchForDevice()
     return false;
 }
 
-bool PN532_BLE::isConnected()
-{
-    return chrWrite != nullptr && chrNotify != nullptr;
-}
+bool PN532_BLE::isConnected() { return chrWrite != nullptr && chrNotify != nullptr; }
 
-bool PN532_BLE::isPN532Killer()
-{
-    return _device.getName().find("PN532Killer") != std::string::npos;
-}
+bool PN532_BLE::isPN532Killer() { return _device.getName().find("PN532Killer") != std::string::npos; }
 
-NimBLERemoteService *PN532_BLE::getService(NimBLEClient *pClient) {
-    for (const auto &uuid : serviceUUIDs) {
+NimBLERemoteService *PN532_BLE::getService(NimBLEClient *pClient)
+{
+    for (const auto &uuid : serviceUUIDs)
+    {
         NimBLERemoteService *service = pClient->getService(uuid);
-        if (service) {
+        if (service)
+        {
             return service;
         }
     }
@@ -298,7 +213,12 @@ bool PN532_BLE::connectToDevice()
         return false;
     }
 
-    chrNotify->subscribe(true, pn532NotifyCallBack);
+    // Use a lambda to call the non-static NotifyCallBack
+    chrNotify->subscribe(
+        true,
+        [this](
+            NimBLERemoteCharacteristic *pRemoteCharacteristic, uint8_t *pData, size_t length, bool isNotify)
+        { this->NotifyCallBack(pRemoteCharacteristic, pData, length, isNotify); });
     return true;
 }
 
@@ -432,50 +352,50 @@ void PN532_BLE::writeData(const std::vector<uint8_t> &data)
     }
 }
 
-void PN532_BLE::setDevice(NimBLEAdvertisedDevice device)
+void PN532_BLE::setDevice(NimBLEAdvertisedDevice device) { _device = device; }
+
+String PN532_BLE::getTagType()
 {
-    _device = device;
-}
-
-String PN532_BLE::getTagType() {
-    switch (hf14aTagInfo.sak) {
-        case 0x09:
-            return "MIFARE Mini";
-        case 0x08:
-        case 0x88:
-            return "MIFARE 1K";
-        case 0x18:
-            return "MIFARE 4K";
-        case 0x00:
-            return "MIFARE Ultralight";
-        default:
-            return "Unknown";
+    switch (hf14aTagInfo.sak)
+    {
+    case 0x09:
+        return "MIFARE Mini";
+    case 0x08:
+    case 0x88:
+        return "MIFARE 1K";
+    case 0x18:
+        return "MIFARE 4K";
+    case 0x00:
+        return "MIFARE Ultralight";
+    default:
+        return "Unknown";
     }
 }
 
-String PN532_BLE::getHf14aTagType() {
-    switch (hf14aTagInfo.sak) {
-        case 0x09:
-            return "MIFARE Mini";
-        case 0x08:
-        case 0x88:
-            return "MIFARE 1K";
-        case 0x18:
-            return "MIFARE 4K";
-        case 0x00:
-            return "MIFARE Ultralight";
-        default:
-            return "Unknown";
+String PN532_BLE::getHf14aTagType()
+{
+    switch (hf14aTagInfo.sak)
+    {
+    case 0x09:
+        return "MIFARE Mini";
+    case 0x08:
+    case 0x88:
+        return "MIFARE 1K";
+    case 0x18:
+        return "MIFARE 4K";
+    case 0x00:
+        return "MIFARE Ultralight";
+    default:
+        return "Unknown";
     }
 }
 
-String PN532_BLE::getHf15TagType() {
-    return "ISO15693";
-}
+String PN532_BLE::getHf15TagType() { return "ISO15693"; }
 
 void PN532_BLE::wakeup()
 {
-    writeData({0x55, 0x55, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
+    writeData(
+        {0x55, 0x55, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
 }
 
 bool PN532_BLE::setNormalMode()
@@ -484,10 +404,7 @@ bool PN532_BLE::setNormalMode()
     return writeCommand(SAMConfiguration, {0x01});
 }
 
-bool PN532_BLE::getVersion()
-{
-    return writeCommand(GetFirmwareVersion);
-}
+bool PN532_BLE::getVersion() { return writeCommand(GetFirmwareVersion); }
 
 PN532_BLE::Iso14aTagInfo PN532_BLE::hf14aScan()
 {
@@ -579,10 +496,7 @@ std::vector<uint8_t> PN532_BLE::send7bit(std::vector<uint8_t> data)
     return responseData;
 }
 
-bool PN532_BLE::resetRegister()
-{
-    return writeCommand(WriteRegister, {0x63, 0x02, 0x00, 0x63, 0x03, 0x00});
-}
+bool PN532_BLE::resetRegister() { return writeCommand(WriteRegister, {0x63, 0x02, 0x00, 0x63, 0x03, 0x00}); }
 
 bool PN532_BLE::halt()
 {
@@ -758,7 +672,8 @@ PN532_BLE::Iso15TagInfo PN532_BLE::parseHf15Scan(uint8_t *data, uint8_t dataSize
     return tagInfo;
 }
 
-std::vector<uint8_t> PN532_BLE::sendHf15Data(std::vector<uint8_t> data, bool append_crc, bool no_check_response)
+std::vector<uint8_t>
+PN532_BLE::sendHf15Data(std::vector<uint8_t> data, bool append_crc, bool no_check_response)
 {
     if (append_crc)
     {
@@ -767,7 +682,7 @@ std::vector<uint8_t> PN532_BLE::sendHf15Data(std::vector<uint8_t> data, bool app
 
     uint8_t req_ack = no_check_response ? 0x00 : 0x80;
 
-    data.insert(data.begin(), 0); // insert tag number
+    data.insert(data.begin(), 0);       // insert tag number
     data.insert(data.begin(), req_ack); // insert req ack
 
     writeCommand(InCommunicateThru, data.data(), data.size());
@@ -777,7 +692,8 @@ std::vector<uint8_t> PN532_BLE::sendHf15Data(std::vector<uint8_t> data, bool app
 PN532_BLE::Iso15TagInfo PN532_BLE::parseHf15TagInfo(uint8_t *data, uint8_t dataSize)
 {
     PN532_BLE::Iso15TagInfo tagInfo;
-    if (dataSize > 15) {
+    if (dataSize > 15)
+    {
         tagInfo.dsfid = data[11];
         tagInfo.afi = data[12];
         tagInfo.blockSize = data[13] + 1;
@@ -854,19 +770,96 @@ std::vector<uint8_t> PN532_BLE::getData()
     return std::vector<uint8_t>(cmdResponse.data, cmdResponse.data + cmdResponse.dataSize);
 }
 
-std::vector<uint8_t>  PN532_BLE::setData(const std::vector<uint8_t> &data)
+std::vector<uint8_t> PN532_BLE::setData(const std::vector<uint8_t> &data)
 {
     bool res = writeCommand(TgSetData, data);
     return std::vector<uint8_t>(cmdResponse.data, cmdResponse.data + cmdResponse.dataSize);
 }
 
-bool PN532_BLE::inRelease()
-{
-    return writeCommand(InRelease, {0x00});
-}
+bool PN532_BLE::inRelease() { return writeCommand(InRelease, {0x00}); }
 
 std::vector<uint8_t> PN532_BLE::tgInitAsTarget(const std::vector<uint8_t> &data)
 {
     bool res = writeCommand(TgInitAsTarget, data);
     return std::vector<uint8_t>(cmdResponse.data, cmdResponse.data + cmdResponse.dataSize);
+}
+
+uint8_t PN532_BLE::dcs(uint8_t *data, size_t length)
+{
+    uint8_t checksum = 0;
+    for (size_t i = 0; i < length; i++)
+    {
+        checksum += data[i];
+    }
+    return (0x00 - checksum) & 0xFF;
+}
+
+void PN532_BLE::appendCrcA(std::vector<uint8_t> &data)
+{
+    uint16_t crc = 0x6363; // Initial value for CRC-A
+
+    for (size_t i = 0; i < data.size(); i++)
+    {
+        uint8_t ch = data[i] ^ (crc & 0xFF);
+        ch = (ch ^ (ch << 4)) & 0xFF;
+        crc = (crc >> 8) ^ (ch << 8) ^ (ch << 3) ^ (ch >> 4);
+    }
+
+    crc &= 0xFFFF;
+    data.push_back(crc & 0xFF);
+    data.push_back(crc >> 8);
+}
+
+void PN532_BLE::appendCrc16Ccitt(std::vector<uint8_t> &data)
+{
+    uint16_t crc = 0xFFFF;
+    for (size_t i = 0; i < data.size(); i++)
+    {
+        crc ^= data[i];
+        for (int j = 0; j < 8; j++)
+        {
+            if (crc & 1)
+            {
+                crc = (crc >> 1) ^ 0x8408;
+            }
+            else
+            {
+                crc >>= 1;
+            }
+        }
+    }
+    crc ^= 0xFFFF;
+    data.push_back(crc & 0xFF);
+    data.push_back((crc >> 8) & 0xFF);
+}
+
+String PN532_BLE::bytes2HexString(std::vector<uint8_t> *data, uint8_t dataSize)
+{
+    String hexString = "";
+    for (size_t i = 0; i < dataSize; i++)
+    {
+        hexString += (*data)[i] < 0x10 ? "0" : "";
+        hexString += String((*data)[i], HEX);
+    }
+    hexString.toUpperCase();
+    return hexString;
+}
+
+std::vector<uint8_t> PN532_BLE::hexStringToUint8Array(const std::string &hexString)
+{
+    std::vector<uint8_t> result;
+    if (hexString.length() % 2 != 0)
+    {
+        std::string paddedHexString = "0" + hexString;
+        return hexStringToUint8Array(paddedHexString);
+    }
+
+    for (size_t i = 0; i < hexString.length(); i += 2)
+    {
+        std::string byteString = hexString.substr(i, 2);
+        uint8_t byte = static_cast<uint8_t>(std::stoul(byteString, nullptr, 16));
+        result.push_back(byte);
+    }
+
+    return result;
 }
