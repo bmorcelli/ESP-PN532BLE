@@ -13,16 +13,16 @@ PN532_BLE::PN532_BLE(bool debug) { _debug = debug; }
 
 PN532_BLE::~PN532_BLE()
 {
-    if (NimBLEDevice::getInitialized())
+    if (NimBLEDevice::isInitialized())
     {
         pn532bleBuffer.clear();
         NimBLEDevice::deinit(true);
     }
 }
 
-class scanCallbacks : public NimBLEAdvertisedDeviceCallbacks
+class scanCallbacks : public NimBLEScanCallbacks
 {
-    void onResult(NimBLEAdvertisedDevice *advertisedDevice)
+    void onResult(const NimBLEAdvertisedDevice *advertisedDevice)
     {
         if (advertisedDevice->getName().find("PN532") != std::string::npos &&
             advertisedDevice->getName().find("BLE") != std::string::npos)
@@ -116,20 +116,20 @@ bool PN532_BLE::searchForDevice()
         Serial.println("Searching for PN532 BLE device...");
     NimBLEDevice::init("");
     NimBLEScan *pScan = NimBLEDevice::getScan();
-    pScan->setAdvertisedDeviceCallbacks(new scanCallbacks());
+    pScan->setScanCallbacks(new scanCallbacks(), false);
     pScan->setActiveScan(true);
     if (_debug)
         Serial.println("Start scanning...");
-    BLEScanResults foundDevices = pScan->start(5);
+    NimBLEScanResults foundDevices = pScan->getResults(5000, false); // 5 seconds in milliseconds
     if (_debug)
         Serial.printf("Scan done! Found %d devices.\n", foundDevices.getCount());
     for (int i = 0; i < foundDevices.getCount(); i++)
     {
-        NimBLEAdvertisedDevice advertisedDevice = foundDevices.getDevice(i);
-        if (advertisedDevice.getName().find("PN532") != std::string::npos &&
-            advertisedDevice.getName().find("BLE") != std::string::npos)
+        const NimBLEAdvertisedDevice *advertisedDevice = foundDevices.getDevice(i);
+        if (advertisedDevice->getName().find("PN532") != std::string::npos &&
+            advertisedDevice->getName().find("BLE") != std::string::npos)
         {
-            _device = advertisedDevice;
+            _device = *advertisedDevice;
             return true;
         }
     }
@@ -182,9 +182,9 @@ bool PN532_BLE::connectToDevice()
 
     auto characteristics = pSvc->getCharacteristics(true);
     Serial.println("Characteristics Size:");
-    Serial.println(characteristics->size());
+    Serial.println(characteristics.size());
 
-    for (auto &characteristic : *characteristics)
+    for (auto &characteristic : characteristics)
     {
         if (characteristic->canWrite())
         {
@@ -192,7 +192,7 @@ bool PN532_BLE::connectToDevice()
             break;
         }
     }
-    for (auto &characteristic : *characteristics)
+    for (auto &characteristic : characteristics)
     {
         if (characteristic->canNotify())
         {
